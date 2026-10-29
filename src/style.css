@@ -473,3 +473,23 @@ img { display: block; }
 @media (hover: hover) {
   .sticker-tray button:hover { background: var(--card); transform: scale(1.08); }
 }
+
+/* "all letters / letters from you / letters from …" buttons above the cards */
+.filter-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+.filter-bar button {
+  padding: 6px 18px 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--purple);
+  font: 1.2rem var(--serif);
+  box-shadow: var(--shadow);
+}
+.filter-bar button[aria-pressed="true"] { background: var(--purple); color: var(--paper); }
+@media (hover: hover) {
+  .filter-bar button[aria-pressed="false"]:hover { background: var(--card); }
+}
+@media (max-width: 600px) {
+  .filter-bar { gap: 8px; margin-bottom: 18px; }
+  .filter-bar button { padding: 5px 14px 6px; font-size: 1.05rem; }
+}

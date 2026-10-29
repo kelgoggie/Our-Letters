@@ -32,6 +32,11 @@ export function getCurrentUser(): string | null {
   return currentUser?.name ?? null;
 }
 
+// Whoever isn't logged in, e.g. "Binks" when Kelly is
+export function getPartnerName(): string {
+  return Object.values(USERS).find((name) => name !== currentUser?.name) ?? "";
+}
+
 // Returns null on success, otherwise a message to show.
 export async function logIn(username: string, password: string): Promise<string | null> {
   const wrong = "wrong username or password";

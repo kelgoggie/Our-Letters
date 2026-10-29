@@ -1,5 +1,5 @@
 import type { Letter } from "../types";
-import { getCurrentUser, getLetters, logOut, setStarred } from "../data/store";
+import { getCurrentUser, getLetters, getPartnerName, logOut, setStarred } from "../data/store";
 import { formatWhen } from "../format";
 
 const STAR_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.7l5.9-.9L12 3.5z"/></svg>`;
@@ -44,7 +44,53 @@ export async function renderGallery(root: HTMLElement) {
   root.append(page);
 
   const sent = (await getLetters()).filter((letter) => !letter.draft);
-  loading.replaceWith(sent.length ? createGrid(sent, { starrable: true }) : emptyMessage("no letters yet. write the first one!"));
+  if (!sent.length) {
+    loading.replaceWith(emptyMessage("no letters yet. write the first one!"));
+    return;
+  }
+
+  // Filter: all letters / letters from you / letters from your partner
+  const me = getCurrentUser();
+  const partner = getPartnerName();
+  const filters = [
+    { id: "all", label: "all letters", empty: "", matches: () => true },
+    { id: "mine", label: "letters from you", empty: "you haven't sent any letters yet.", matches: (l: Letter) => l.from === me },
+    { id: "theirs", label: `letters from ${partner}`, empty: `no letters from ${partner} yet.`, matches: (l: Letter) => l.from === partner },
+  ];
+
+  const filterBar = document.createElement("div");
+  filterBar.className = "filter-bar";
+  filterBar.setAttribute("role", "group");
+  filterBar.setAttribute("aria-label", "Show letters");
+  for (const filter of filters) {
+    const button = document.createElement("button");
+    button.dataset.filter = filter.id;
+    button.textContent = filter.label;
+    filterBar.append(button);
+  }
+
+  let results: HTMLElement = loading;
+  const showFilter = (id: string) => {
+    const filter = filters.find((f) => f.id === id) ?? filters[0];
+    for (const button of filterBar.querySelectorAll<HTMLElement>("button")) {
+      button.setAttribute("aria-pressed", String(button.dataset.filter === filter.id));
+    }
+    const shown = sent.filter(filter.matches);
+    const next = shown.length ? createGrid(shown, { starrable: true }) : emptyMessage(filter.empty);
+    results.replaceWith(next);
+    results = next;
+    try { localStorage.setItem("letterFilter", filter.id); } catch {} // remember on this device
+  };
+
+  filterBar.addEventListener("click", (e) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>("[data-filter]")?.dataset.filter;
+    if (id) showFilter(id);
+  });
+
+  loading.before(filterBar);
+  let saved = "all";
+  try { saved = localStorage.getItem("letterFilter") ?? "all"; } catch {}
+  showFilter(saved);
 }
 
 export function createGrid(letters: Letter[], options: CardOptions = {}) {
