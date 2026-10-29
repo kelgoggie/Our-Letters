@@ -1,76 +1,164 @@
-import type { Letter } from "../types";
+import type { Session } from "@supabase/supabase-js";
+import type { Letter, LetterElement } from "../types";
+import { supabase } from "./supabase";
 
-// Everything is saved in this browser's localStorage for now.
-// Pages only talk to this file, so it can be swapped for a real backend later.
-const LETTERS_KEY = "letters";
-const USER_KEY = "currentUser";
+// Everything is saved in Supabase. Pages only talk to this file.
 
-// The only two accounts. Passwords come from .env.local.
-// Note: Vite bakes these into the site's code, so this only keeps out
-// casual visitors until there's a real backend.
-const USERS: Record<string, { name: string; password?: string }> = {
-  kelly: { name: "Kelly", password: import.meta.env.VITE_KELLY_PASSWORD },
-  binks: { name: "Binks", password: import.meta.env.VITE_BINKS_PASSWORD },
-};
+// ---------- Logins ----------
+
+// The only two accounts. Supabase logins need an email, so each username maps to one
+// (e.g. kelly → kelly@ourletters.app). No emails are ever sent to these addresses.
+const USERS: Record<string, string> = { kelly: "Kelly", binks: "Binks" };
+const EMAIL_DOMAIN = "ourletters.app";
+
+type User = { id: string; name: string };
+let currentUser: User | null = null;
+
+function userFromSession(session: Session | null): User | null {
+  const username = session?.user.email?.split("@")[0] ?? "";
+  return session && USERS[username] ? { id: session.user.id, name: USERS[username] } : null;
+}
+
+// Call once at startup, before showing any page
+export async function initAuth() {
+  const { data } = await supabase.auth.getSession();
+  currentUser = userFromSession(data.session);
+  supabase.auth.onAuthStateChange((_event, session) => {
+    currentUser = userFromSession(session);
+  });
+}
 
 export function getCurrentUser(): string | null {
-  const name = localStorage.getItem(USER_KEY);
-  const isKnownUser = Object.values(USERS).some((user) => user.name === name);
-  return isKnownUser ? name : null;
+  return currentUser?.name ?? null;
 }
 
-// Returns false if the username or password is wrong.
-export function logIn(username: string, password: string): boolean {
-  const user = USERS[username.trim().toLowerCase()];
-  if (!user?.password || password !== user.password) return false;
-  localStorage.setItem(USER_KEY, user.name);
-  return true;
-}
-
-export function logOut() {
-  localStorage.removeItem(USER_KEY);
-}
-
-export function getLetters(): Letter[] {
-  try {
-    const saved = localStorage.getItem(LETTERS_KEY);
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
+// Returns null on success, otherwise a message to show.
+export async function logIn(username: string, password: string): Promise<string | null> {
+  const wrong = "wrong username or password";
+  // Accept "kelly" or the full "kelly@ourletters.app"
+  const name = username.trim().toLowerCase().replace(`@${EMAIL_DOMAIN}`, "");
+  if (!USERS[name]) return wrong;
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: `${name}@${EMAIL_DOMAIN}`,
+    password,
+  });
+  if (error) {
+    console.error("Login failed:", error);
+    if (error.code === "invalid_credentials") return wrong;
+    if (error.code === "email_not_confirmed") return "this account isn't confirmed yet in Supabase";
+    return `couldn't log in: ${error.message}`;
   }
+  currentUser = userFromSession(data.session);
+  return null;
 }
 
-// One-time cleanup of old test data:
-// - the sample letters (ids "1"–"3") that got saved alongside real ones
-// - the first test letter, sent as "Untitled letter" back when blank titles got that name
-// Runs once per browser, so a letter you deliberately title "Untitled letter" later is safe.
-const CLEANUP_KEY = "cleanupVersion";
-if (localStorage.getItem(CLEANUP_KEY) !== "2") {
-  const SAMPLE_IDS = ["1", "2", "3"];
-  const cleaned = getLetters().filter(
-    (letter) => !SAMPLE_IDS.includes(letter.id) && !(letter.title === "Untitled letter" && !letter.draft)
-  );
-  localStorage.setItem(LETTERS_KEY, JSON.stringify(cleaned));
-  localStorage.setItem(CLEANUP_KEY, "2");
+export async function logOut() {
+  await supabase.auth.signOut();
+  currentUser = null;
 }
 
-export function getLetter(id: string): Letter | undefined {
-  return getLetters().find((letter) => letter.id === id);
+// ---------- Letters ----------
+
+type LetterRow = {
+  id: string;
+  from_name: string;
+  title: string;
+  elements: LetterElement[];
+  draft: boolean;
+  created_at: string;
+};
+
+function toLetter(row: LetterRow, starred: boolean): Letter {
+  return {
+    id: row.id,
+    title: row.title,
+    from: row.from_name,
+    createdAt: row.created_at,
+    elements: row.elements,
+    draft: row.draft,
+    starred,
+  };
 }
 
-// Throws if the browser runs out of storage space (usually from big pictures).
-export function saveLetter(letter: Letter) {
-  const letters = getLetters().filter((l) => l.id !== letter.id);
-  letters.push(letter);
-  localStorage.setItem(LETTERS_KEY, JSON.stringify(letters));
+// Sent letters from both of you, plus your own drafts (the database rules handle that)
+export async function getLetters(): Promise<Letter[]> {
+  const [letters, stars] = await Promise.all([
+    supabase.from("letters").select("*"),
+    supabase.from("stars").select("letter_id"),
+  ]);
+  if (letters.error) throw letters.error;
+  const starred = new Set((stars.data ?? []).map((s) => s.letter_id));
+  return (letters.data as LetterRow[]).map((row) => toLetter(row, starred.has(row.id)));
 }
 
-export function deleteLetter(id: string) {
-  const letters = getLetters().filter((l) => l.id !== id);
-  localStorage.setItem(LETTERS_KEY, JSON.stringify(letters));
+export async function getLetter(id: string): Promise<Letter | undefined> {
+  const { data, error } = await supabase.from("letters").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? toLetter(data as LetterRow, false) : undefined;
 }
 
-export function toggleStar(id: string) {
-  const letter = getLetter(id);
-  if (letter) saveLetter({ ...letter, starred: !letter.starred });
+// newPhotos: element id → a photo picked in the editor that isn't uploaded yet.
+// Those get uploaded first, then the letter is saved pointing at them.
+export async function saveLetter(letter: Letter, newPhotos = new Map<string, Blob>()) {
+  if (!currentUser) throw new Error("Not signed in");
+  const userId = currentUser.id;
+
+  const elements = await Promise.all(letter.elements.map(async (el) => {
+    const photo = newPhotos.get(el.id);
+    if (el.kind !== "image" || !photo) return el;
+    const extension = photo.type.split("/")[1] || "webp";
+    const path = `${userId}/${crypto.randomUUID()}.${extension}`;
+    const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, photo, { contentType: photo.type });
+    if (error) throw error;
+    return { ...el, src: path };
+  }));
+
+  const { error } = await supabase.from("letters").upsert({
+    id: letter.id,
+    author_id: userId,
+    from_name: letter.from,
+    title: letter.title,
+    elements,
+    draft: letter.draft ?? false,
+    created_at: letter.createdAt,
+  });
+  if (error) throw error;
+}
+
+export async function deleteLetter(letter: Letter) {
+  const { error } = await supabase.from("letters").delete().eq("id", letter.id);
+  if (error) throw error;
+  const paths = photoPaths(letter.elements);
+  if (paths.length) await supabase.storage.from(PHOTO_BUCKET).remove(paths);
+}
+
+export async function setStarred(letterId: string, starred: boolean) {
+  const { error } = starred
+    ? await supabase.from("stars").insert({ letter_id: letterId })
+    : await supabase.from("stars").delete().eq("letter_id", letterId);
+  if (error) throw error;
+}
+
+// ---------- Photos ----------
+
+const PHOTO_BUCKET = "photos";
+
+// Uploaded photos are saved as a path like "<user id>/<random>.webp".
+// Anything else (data:, blob:, http, /heart.svg) is already a usable address.
+function isUploadedPhoto(src: string) {
+  return !/^(data:|blob:|https?:|\/)/.test(src);
+}
+
+function photoPaths(elements: LetterElement[]) {
+  return elements.flatMap((el) => (el.kind === "image" && isUploadedPhoto(el.src) ? [el.src] : []));
+}
+
+// Photos are private, so each one needs a temporary link (valid for an hour) to show it.
+// Returns uploaded path → link.
+export async function getPhotoUrls(elements: LetterElement[]): Promise<Map<string, string>> {
+  const paths = photoPaths(elements);
+  if (!paths.length) return new Map();
+  const { data, error } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 60 * 60);
+  if (error) throw error;
+  return new Map(data.flatMap((d) => (d.path && d.signedUrl ? [[d.path, d.signedUrl] as [string, string]] : [])));
 }

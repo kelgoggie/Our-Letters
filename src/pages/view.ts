@@ -1,9 +1,8 @@
-import { deleteLetter, getCurrentUser, getLetter } from "../data/store";
+import { deleteLetter, getCurrentUser, getLetter, getPhotoUrls } from "../data/store";
 import { formatWhen } from "../format";
 import { createPaper, renderElement } from "../render";
 
-export function renderView(root: HTMLElement, id: string) {
-  const letter = getLetter(id);
+export async function renderView(root: HTMLElement, id: string) {
   const page = document.createElement("main");
   page.className = "view";
 
@@ -11,26 +10,32 @@ export function renderView(root: HTMLElement, id: string) {
   top.className = "view-top";
   top.innerHTML = `<a class="back" href="#/">‹ back</a>`;
   page.append(top);
+  root.append(page);
 
-  // You can delete letters you wrote
-  if (letter && letter.from === getCurrentUser()) {
-    const remove = document.createElement("button");
-    remove.className = "back";
-    remove.textContent = "delete letter";
-    remove.addEventListener("click", () => {
-      if (!confirm("Delete this letter? This can't be undone.")) return;
-      deleteLetter(letter.id);
-      location.hash = "#/";
-    });
-    top.append(remove);
-  }
-
+  const letter = await getLetter(id);
   if (!letter) {
     const missing = document.createElement("p");
     missing.textContent = "This letter doesn't exist.";
     page.append(missing);
-    root.append(page);
     return;
+  }
+  const photoUrls = await getPhotoUrls(letter.elements);
+
+  // You can delete letters you wrote
+  if (letter.from === getCurrentUser()) {
+    const remove = document.createElement("button");
+    remove.className = "back";
+    remove.textContent = "delete letter";
+    remove.addEventListener("click", async () => {
+      if (!confirm("Delete this letter? This can't be undone.")) return;
+      try {
+        await deleteLetter(letter);
+        location.hash = "#/";
+      } catch {
+        alert("Couldn't delete the letter. Check your internet connection.");
+      }
+    });
+    top.append(remove);
   }
 
   const sheet = document.createElement("div");
@@ -45,10 +50,8 @@ export function renderView(root: HTMLElement, id: string) {
 
   const paper = createPaper();
   for (const el of letter.elements) {
-    paper.append(renderElement(el));
+    paper.append(renderElement(el, photoUrls));
   }
   sheet.append(paper);
-
   page.append(sheet);
-  root.append(page);
 }

@@ -31,11 +31,16 @@ export function renderLogin(root: HTMLElement) {
   const form = page.querySelector("form")!;
   const error = page.querySelector<HTMLParagraphElement>(".error")!;
 
-  form.addEventListener("submit", (e) => {
+  const button = page.querySelector<HTMLButtonElement>(".login-button")!;
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const data = new FormData(form);
-    const ok = logIn(String(data.get("username")), String(data.get("password")));
-    if (!ok) {
+    button.disabled = true;
+    const problem = await logIn(String(data.get("username")), String(data.get("password")));
+    button.disabled = false;
+    if (problem) {
+      error.textContent = problem;
       error.hidden = false;
       form.querySelector<HTMLInputElement>("[name=password]")!.select();
       return;

@@ -1,7 +1,8 @@
+import type { Letter } from "../types";
 import { deleteLetter, getCurrentUser, getLetters } from "../data/store";
 import { createGrid, emptyMessage } from "./gallery";
 
-export function renderDrafts(root: HTMLElement) {
+export async function renderDrafts(root: HTMLElement) {
   const page = document.createElement("main");
   page.className = "gallery";
   page.innerHTML = `
@@ -13,14 +14,21 @@ export function renderDrafts(root: HTMLElement) {
       </div>
     </header>
   `;
+  const loading = emptyMessage("loading drafts…");
+  page.append(loading);
+  root.append(page);
 
   const me = getCurrentUser();
-  const drafts = getLetters().filter((letter) => letter.draft && letter.from === me);
-  const onDelete = (id: string) => {
-    deleteLetter(id);
+  const drafts = (await getLetters()).filter((letter) => letter.draft && letter.from === me);
+  const onDelete = async (letter: Letter) => {
+    try {
+      await deleteLetter(letter);
+    } catch {
+      alert("Couldn't delete that draft. Check your internet connection.");
+      return;
+    }
     root.innerHTML = "";
     renderDrafts(root); // redraw without it
   };
-  page.append(drafts.length ? createGrid(drafts, { editable: true, onDelete }) : emptyMessage("no drafts saved."));
-  root.append(page);
+  loading.replaceWith(drafts.length ? createGrid(drafts, { editable: true, onDelete }) : emptyMessage("no drafts saved."));
 }

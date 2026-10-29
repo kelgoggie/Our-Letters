@@ -1,18 +1,20 @@
 import type { Letter, LetterElement } from "../types";
-import { getCurrentUser, getLetter, saveLetter } from "../data/store";
+import { getCurrentUser, getLetter, getPhotoUrls, saveLetter } from "../data/store";
 import { cleanHtml, createPaper, positionElement, renderElement, styleText } from "../render";
 
 
 // Pass a draftId to keep working on a saved draft
-export function renderCraft(root: HTMLElement, draftId?: string) {
+export async function renderCraft(root: HTMLElement, draftId?: string) {
   const me = getCurrentUser() ?? "Someone";
-  const draft = draftId ? getLetter(draftId) : undefined;
+  const draft = draftId ? await getLetter(draftId) : undefined;
   if (draftId && (!draft?.draft || draft.from !== me)) {
     root.innerHTML = `<main class="craft"><a class="back" href="#/drafts">‹ back</a><p>This draft doesn't exist.</p></main>`;
     return;
   }
 
   const letterId = draft?.id ?? crypto.randomUUID();
+  const photoUrls = draft ? await getPhotoUrls(draft.elements) : new Map<string, string>();
+  const newPhotos = new Map<string, Blob>(); // photos added here, uploaded when you save
   const elements: LetterElement[] = [];
   const nodes = new Map<string, HTMLElement>();
   let selectedId: string | null = null;
@@ -135,7 +137,7 @@ export function renderCraft(root: HTMLElement, draftId?: string) {
 
   function addElement(el: LetterElement) {
     elements.push(el);
-    const node = renderElement(el);
+    const node = renderElement(el, photoUrls);
     nodes.set(el.id, node);
     attachInteractions(node, el);
     // A photo's height isn't known until it loads
@@ -315,11 +317,12 @@ export function renderCraft(root: HTMLElement, draftId?: string) {
   fileInput.addEventListener("change", async () => {
     for (const file of fileInput.files ?? []) {
       try {
-        const src = await fileToDataUrl(file);
+        const photo = await shrinkPhoto(file);
         const el: LetterElement = {
-          kind: "image", id: crypto.randomUUID(), src,
+          kind: "image", id: crypto.randomUUID(), src: URL.createObjectURL(photo), // local preview until saved
           x: 30, y: 30, width: 40, rotation: 0, z: topZ(),
         };
+        newPhotos.set(el.id, photo);
         addElement(el);
         select(el.id);
       } catch {
@@ -364,7 +367,12 @@ export function renderCraft(root: HTMLElement, draftId?: string) {
     if (action === "delete") removeElement(el);
   });
 
-  function save(isDraft: boolean): Letter | null {
+  // Grey out the buttons while saving so nothing gets sent twice
+  function setSaving(saving: boolean) {
+    for (const button of header.querySelectorAll("button")) button.disabled = saving;
+  }
+
+  async function save(isDraft: boolean): Promise<Letter | null> {
     (document.activeElement as HTMLElement | null)?.blur(); // finish any text being edited
     const letter: Letter = {
       id: letterId,
@@ -374,28 +382,32 @@ export function renderCraft(root: HTMLElement, draftId?: string) {
       elements,
       draft: isDraft,
     };
+    setSaving(true);
     try {
-      saveLetter(letter);
+      await saveLetter(letter, newPhotos);
       return letter;
-    } catch {
-      alert("This letter is too big to save. Try fewer or smaller photos.");
+    } catch (err) {
+      console.error(err);
+      alert("Couldn't save your letter. Check your internet connection and try again.");
       return null;
+    } finally {
+      setSaving(false);
     }
   }
 
-  header.addEventListener("click", (e) => {
+  header.addEventListener("click", async (e) => {
     const action = (e.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "photo") fileInput.click();
     if (action === "draft") {
       if (elements.length === 0 && !titleInput.value.trim()) return;
-      if (save(true)) location.hash = "#/drafts";
+      if (await save(true)) location.hash = "#/drafts";
     }
     if (action === "send") {
       if (elements.length === 0) {
         alert("Your letter is empty. Write something or add a photo first.");
         return;
       }
-      const letter = save(false);
+      const letter = await save(false);
       if (letter) location.hash = `#/letter/${letter.id}`;
     }
   });
@@ -404,15 +416,18 @@ export function renderCraft(root: HTMLElement, draftId?: string) {
   select(null);
 }
 
-// Shrinks big photos so letters fit in browser storage.
-async function fileToDataUrl(file: File, maxSize = 1000): Promise<string> {
+// Shrinks big photos so they upload and load quickly.
+async function shrinkPhoto(file: File, maxSize = 1600): Promise<Blob> {
   const bitmap = await decodeImage(file);
   const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/webp", 0.85); // webp keeps transparency and stays small
+  // webp keeps transparency and stays small (browsers that can't make webp give a png)
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Couldn't shrink photo"))), "image/webp", 0.85)
+  );
 }
 
 // Most browsers can't open iPhone HEIC photos, so convert those ourselves.

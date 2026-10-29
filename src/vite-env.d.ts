@@ -1,6 +1,6 @@
 interface ImportMetaEnv {
-  readonly VITE_KELLY_PASSWORD?: string;
-  readonly VITE_BINKS_PASSWORD?: string;
+  readonly VITE_SUPABASE_URL: string;
+  readonly VITE_SUPABASE_KEY: string;
 }
 
 interface ImportMeta {

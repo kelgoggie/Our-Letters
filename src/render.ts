@@ -9,7 +9,8 @@ export function createPaper(): HTMLDivElement {
   return paper;
 }
 
-export function renderElement(el: LetterElement): HTMLElement {
+// photoUrls maps uploaded photo paths to viewable links (see getPhotoUrls)
+export function renderElement(el: LetterElement, photoUrls?: Map<string, string>): HTMLElement {
   let node: HTMLElement;
   if (el.kind === "text") {
     node = document.createElement("div");
@@ -20,7 +21,7 @@ export function renderElement(el: LetterElement): HTMLElement {
   } else {
     const img = document.createElement("img");
     img.className = "letter-image";
-    img.src = el.src;
+    img.src = photoUrls?.get(el.src) ?? el.src;
     img.alt = "";
     img.draggable = false;
     node = img;

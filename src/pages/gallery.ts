@@ -1,5 +1,5 @@
 import type { Letter } from "../types";
-import { getCurrentUser, getLetters, logOut, toggleStar } from "../data/store";
+import { getCurrentUser, getLetters, logOut, setStarred } from "../data/store";
 import { formatWhen } from "../format";
 
 const STAR_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.7l5.9-.9L12 3.5z"/></svg>`;
@@ -8,10 +8,10 @@ const TRASH_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16
 type CardOptions = {
   starrable?: boolean;
   editable?: boolean;                 // opens in the editor instead of the reader
-  onDelete?: (id: string) => void;    // shows a delete button
+  onDelete?: (letter: Letter) => void;    // shows a delete button
 };
 
-export function renderGallery(root: HTMLElement) {
+export async function renderGallery(root: HTMLElement) {
   const page = document.createElement("main");
   page.className = "gallery";
 
@@ -36,13 +36,15 @@ export function renderGallery(root: HTMLElement) {
   `;
   page.querySelector(".name")!.textContent = `${getCurrentUser()}!`;
   page.querySelector(".log-out")!.addEventListener("click", () => {
-    logOut();
-    location.hash = "#/login";
+    logOut().then(() => (location.hash = "#/login"));
   });
 
-  const sent = getLetters().filter((letter) => !letter.draft);
-  page.append(sent.length ? createGrid(sent, { starrable: true }) : emptyMessage("no letters yet. write the first one!"));
+  const loading = emptyMessage("loading letters…");
+  page.append(loading);
   root.append(page);
+
+  const sent = (await getLetters()).filter((letter) => !letter.draft);
+  loading.replaceWith(sent.length ? createGrid(sent, { starrable: true }) : emptyMessage("no letters yet. write the first one!"));
 }
 
 export function createGrid(letters: Letter[], options: CardOptions = {}) {
@@ -87,7 +89,7 @@ function createCard(letter: Letter, { starrable = false, editable = false, onDel
     trash.innerHTML = TRASH_ICON;
     trash.setAttribute("aria-label", "Delete");
     trash.addEventListener("click", () => {
-      if (confirm(`Delete "${letter.title || "Untitled letter"}"? This can't be undone.`)) onDelete(letter.id);
+      if (confirm(`Delete "${letter.title || "Untitled letter"}"? This can't be undone.`)) onDelete(letter);
     });
     card.append(trash);
   }
@@ -99,8 +101,12 @@ function createCard(letter: Letter, { starrable = false, editable = false, onDel
     star.setAttribute("aria-label", "Star this letter");
     star.setAttribute("aria-pressed", String(!!letter.starred));
     star.addEventListener("click", () => {
-      toggleStar(letter.id);
-      star.setAttribute("aria-pressed", String(star.getAttribute("aria-pressed") !== "true"));
+      const starred = star.getAttribute("aria-pressed") !== "true";
+      star.setAttribute("aria-pressed", String(starred)); // update right away, save in the background
+      setStarred(letter.id, starred).catch(() => {
+        star.setAttribute("aria-pressed", String(!starred));
+        alert("Couldn't save that star. Check your internet connection.");
+      });
     });
     card.append(star);
   }
