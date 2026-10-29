@@ -315,7 +315,8 @@ img { display: block; }
 .sheet-title:not(:placeholder-shown) + .title-label { display: none; }
 .title-field:focus-within { border-bottom-color: var(--purple); }
 
-.sheet-meta { margin: 8px 0 0 7%; color: var(--purple); }
+.sheet-meta { margin: 8px 0 0 7%; color: var(--purple); font-size: 0.9rem; }
+@media (max-width: 600px) { .sheet-meta { font-size: 0.8rem; } }
 
 /* x and width are % of the paper's width, y is % of its height */
 .paper {

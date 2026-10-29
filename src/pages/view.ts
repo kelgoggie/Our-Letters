@@ -1,6 +1,6 @@
 import { deleteLetter, getCurrentUser, getLetter, getPhotoUrls } from "../data/store";
 import { formatWhen } from "../format";
-import { createPaper, renderElement } from "../render";
+import { createPaper, fitPaper, renderElement } from "../render";
 
 export async function renderView(root: HTMLElement, id: string) {
   const page = document.createElement("main");
@@ -54,4 +54,9 @@ export async function renderView(root: HTMLElement, id: string) {
   }
   sheet.append(paper);
   page.append(sheet);
+
+  fitPaper(paper);
+  // Photos change height once they load, and the paper resizes with the window
+  for (const img of paper.querySelectorAll("img")) img.addEventListener("load", () => fitPaper(paper));
+  new ResizeObserver(() => fitPaper(paper)).observe(sheet);
 }

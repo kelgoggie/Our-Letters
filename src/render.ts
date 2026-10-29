@@ -9,6 +9,25 @@ export function createPaper(): HTMLDivElement {
   return paper;
 }
 
+// The paper is 3:4 (see .paper in style.css). y is a % of that base height, but it's
+// positioned using the paper's width, so the paper can grow taller without anything moving.
+export const PAPER_HEIGHT_RATIO = 4 / 3;
+
+export function paperBaseHeight(paper: HTMLElement) {
+  return paper.getBoundingClientRect().width * PAPER_HEIGHT_RATIO;
+}
+
+// Text never shrinks below a readable size on small screens, so it can wrap onto more
+// lines than on a big screen. Stretch the paper so nothing gets cut off at the bottom.
+export function fitPaper(paper: HTMLElement) {
+  let bottom = 0;
+  for (const child of paper.children) {
+    if (!(child instanceof HTMLElement) || child.classList.contains("resize-box")) continue;
+    bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
+  }
+  paper.style.minHeight = bottom ? `${bottom + 24}px` : "";
+}
+
 // photoUrls maps uploaded photo paths to viewable links (see getPhotoUrls)
 export function renderElement(el: LetterElement, photoUrls?: Map<string, string>): HTMLElement {
   let node: HTMLElement;
@@ -63,14 +82,14 @@ export function cleanHtml(html: string): DocumentFragment {
 }
 
 export function styleText(node: HTMLElement, el: Extract<LetterElement, { kind: "text" }>) {
-  node.style.fontSize = `${el.fontSize}cqw`;
+  node.style.fontSize = `max(${el.fontSize}cqw, 15px)`; // never smaller than 15px
   node.style.fontWeight = el.bold ? "700" : "";
   node.style.fontStyle = el.italic ? "italic" : "";
 }
 
 export function positionElement(node: HTMLElement, el: LetterElement) {
   node.style.left = `${el.x}%`;
-  node.style.top = `${el.y}%`;
+  node.style.top = `${el.y * PAPER_HEIGHT_RATIO}cqw`;
   node.style.width = `${el.width}%`;
   node.style.transform = `rotate(${el.rotation}deg)`;
   node.style.zIndex = String(el.z);

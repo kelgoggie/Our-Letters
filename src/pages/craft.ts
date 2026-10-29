@@ -1,6 +1,6 @@
 import type { Letter, LetterElement } from "../types";
 import { getCurrentUser, getLetter, getPhotoUrls, saveLetter } from "../data/store";
-import { cleanHtml, createPaper, positionElement, renderElement, styleText } from "../render";
+import { cleanHtml, createPaper, fitPaper, paperBaseHeight, positionElement, renderElement, styleText } from "../render";
 
 
 // Files in public/stickers. To add your own, drop a PNG/SVG in that folder and add its name here.
@@ -155,6 +155,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     resizeBox.style.top = `calc(${el.y}% - 4px)`;
     resizeBox.style.width = `calc(${el.width}% + 8px)`;
     resizeBox.style.height = `${node.offsetHeight + 8}px`;
+    fitPaper(paper);
     resizeBox.style.transform = `rotate(${el.rotation}deg)`;
   }
 
@@ -225,6 +226,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
       select(el.id);
 
       const rect = paper.getBoundingClientRect();
+      const baseHeight = paperBaseHeight(paper);
       const startX = e.clientX;
       const startY = e.clientY;
       const origX = el.x;
@@ -233,7 +235,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
 
       const move = (ev: PointerEvent) => {
         el.x = origX + ((ev.clientX - startX) / rect.width) * 100;
-        el.y = origY + ((ev.clientY - startY) / rect.height) * 100;
+        el.y = origY + ((ev.clientY - startY) / baseHeight) * 100;
         positionElement(node, el);
         updateResizeBox();
       };
@@ -257,7 +259,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     if (e.target !== paper) return;
     if (selectedId) return select(null);
     const rect = paper.getBoundingClientRect();
-    addText(((e.clientX - rect.left) / rect.width) * 100, ((e.clientY - rect.top) / rect.height) * 100);
+    addText(((e.clientX - rect.left) / rect.width) * 100, ((e.clientY - rect.top) / paperBaseHeight(paper)) * 100);
   });
 
   // Dragging a side handle on text changes how wide the column is: the words rewrap
@@ -303,13 +305,12 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     if (handle.classList.contains("w") || handle.classList.contains("e")) {
       return dragColumnEdge(e, handle, el, node);
     }
-    const paperRect = paper.getBoundingClientRect();
     const nodeRect = node.getBoundingClientRect();
     const cx = nodeRect.left + nodeRect.width / 2;
     const cy = nodeRect.top + nodeRect.height / 2;
     const startDistance = Math.max(1, Math.hypot(e.clientX - cx, e.clientY - cy));
     const origWidth = el.width;
-    const origHeight = (node.offsetHeight / paperRect.height) * 100; // in % of paper height
+    const origHeight = (node.offsetHeight / paperBaseHeight(paper)) * 100; // in % of paper height
     const centerX = el.x + origWidth / 2;
     const centerY = el.y + origHeight / 2;
     const origFont = el.kind === "text" ? el.fontSize : 0;
@@ -417,7 +418,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     if (input.name === "rotation") el.rotation = value;
     if (input.name === "fontSize" && el.kind === "text") {
       el.fontSize = value;
-      nodes.get(el.id)!.style.fontSize = `${value}cqw`;
+      styleText(nodes.get(el.id)!, el);
     }
     positionElement(nodes.get(el.id)!, el);
     updateResizeBox();
