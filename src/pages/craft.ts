@@ -3,6 +3,9 @@ import { getCurrentUser, getLetter, getPhotoUrls, saveLetter } from "../data/sto
 import { cleanHtml, createPaper, positionElement, renderElement, styleText } from "../render";
 
 
+// Files in public/stickers. To add your own, drop a PNG/SVG in that folder and add its name here.
+const STICKERS = ["heart.svg", "star.svg", "sparkle.svg", "flower.svg", "envelope.svg", "clover.png"];
+
 // Pass a draftId to keep working on a saved draft
 export async function renderCraft(root: HTMLElement, draftId?: string) {
   const me = getCurrentUser() ?? "Someone";
@@ -26,11 +29,29 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
   header.innerHTML = `
     <a class="back" href="#/">‹ back</a>
     <button class="pill" data-action="photo"><img src="/icons/akar-icons_image.png" alt="" /><span><span class="long">add </span><b>photo</b></span></button>
+    <button class="pill" data-action="sticker" aria-expanded="false"><img src="/stickers/sparkle.svg" alt="" /><span><span class="long">add </span><b>sticker</b></span></button>
     <button class="pill" data-action="draft"><img src="/icons/fluent_drafts-24-filled.png" alt="" /><span><span class="long">save to </span><b>drafts</b></span></button>
     <button class="pill send" data-action="send"><img src="/icons/andrsrxn_send-filled.png" alt="" /><span>send<span class="long"> <b>letter</b></span></span></button>
     <input type="file" accept="image/*,.heic,.heif" multiple hidden />
   `;
   const fileInput = header.querySelector<HTMLInputElement>("input")!;
+  const stickerButton = header.querySelector<HTMLButtonElement>("[data-action=sticker]")!;
+
+  // Tray of stickers that opens under the buttons
+  const stickerTray = document.createElement("div");
+  stickerTray.className = "sticker-tray";
+  stickerTray.hidden = true;
+  for (const name of STICKERS) {
+    const button = document.createElement("button");
+    button.dataset.sticker = `/stickers/${name}`;
+    button.setAttribute("aria-label", `Add ${name.split(".")[0]} sticker`);
+    button.innerHTML = `<img src="/stickers/${name}" alt="" />`;
+    stickerTray.append(button);
+  }
+  const setTrayOpen = (open: boolean) => {
+    stickerTray.hidden = !open;
+    stickerButton.setAttribute("aria-expanded", String(open));
+  };
 
   // Settings for whichever element is selected; floats at the bottom of the screen
   const controls = document.createElement("div");
@@ -74,10 +95,11 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
   const resizeBox = document.createElement("div");
   resizeBox.className = "resize-box";
   resizeBox.hidden = true;
-  resizeBox.innerHTML = ["nw", "ne", "sw", "se"].map((corner) => `<span class="handle ${corner}"></span>`).join("");
+  // nw/ne/sw/se are the corner dots; w/e are the side handles text boxes get for column width
+  resizeBox.innerHTML = ["nw", "ne", "sw", "se", "w", "e"].map((spot) => `<span class="handle ${spot}"></span>`).join("");
   paper.append(resizeBox);
 
-  page.append(header, sheet, controls);
+  page.append(header, stickerTray, sheet, controls);
   root.append(page);
 
   const selected = () => elements.find((el) => el.id === selectedId);
@@ -128,6 +150,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     const node = el && nodes.get(el.id);
     resizeBox.hidden = !node;
     if (!el || !node) return;
+    resizeBox.classList.toggle("is-text", el.kind === "text");
     resizeBox.style.left = `calc(${el.x}% - 4px)`;
     resizeBox.style.top = `calc(${el.y}% - 4px)`;
     resizeBox.style.width = `calc(${el.width}% + 8px)`;
@@ -237,6 +260,38 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     addText(((e.clientX - rect.left) / rect.width) * 100, ((e.clientY - rect.top) / rect.height) * 100);
   });
 
+  // Dragging a side handle on text changes how wide the column is: the words rewrap
+  // and the text size stays the same. The opposite edge stays put.
+  function dragColumnEdge(e: PointerEvent, handle: HTMLElement, el: LetterElement, node: HTMLElement) {
+    const paperWidth = paper.getBoundingClientRect().width;
+    const angle = (el.rotation * Math.PI) / 180;
+    const fromLeft = handle.classList.contains("w");
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const origWidth = el.width;
+    const origX = el.x;
+    handle.setPointerCapture(e.pointerId);
+
+    const move = (ev: PointerEvent) => {
+      // How far the pointer moved along the box's width, even when it's tilted
+      const along = (ev.clientX - startX) * Math.cos(angle) + (ev.clientY - startY) * Math.sin(angle);
+      const change = ((fromLeft ? -along : along) / paperWidth) * 100;
+      el.width = Math.min(100, Math.max(8, origWidth + change));
+      if (fromLeft) el.x = origX + origWidth - el.width;
+      positionElement(node, el);
+      updateResizeBox();
+      widthInput.value = String(el.width);
+    };
+    const stop = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", stop);
+      handle.removeEventListener("pointercancel", stop);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  }
+
   // Dragging a corner dot scales the element around its center, keeping its shape.
   // For text, the font grows with the box so the words wrap the same way.
   resizeBox.addEventListener("pointerdown", (e) => {
@@ -245,6 +300,9 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     if (!el || !handle) return;
     e.preventDefault();
     const node = nodes.get(el.id)!;
+    if (handle.classList.contains("w") || handle.classList.contains("e")) {
+      return dragColumnEdge(e, handle, el, node);
+    }
     const paperRect = paper.getBoundingClientRect();
     const nodeRect = node.getBoundingClientRect();
     const cx = nodeRect.left + nodeRect.width / 2;
@@ -313,6 +371,24 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
     }
   }
   document.addEventListener("keydown", onKeyDown);
+
+  stickerTray.addEventListener("click", (e) => {
+    const src = (e.target as HTMLElement).closest<HTMLElement>("[data-sticker]")?.dataset.sticker;
+    if (!src) return;
+    const el: LetterElement = {
+      kind: "image", id: crypto.randomUUID(), src,
+      x: 40, y: 35, width: 20, rotation: Math.round(Math.random() * 20 - 10), z: topZ(), // a little tilt feels hand-placed
+    };
+    addElement(el);
+    select(el.id);
+    setTrayOpen(false);
+  });
+  stickerTray.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      setTrayOpen(false);
+      stickerButton.focus();
+    }
+  });
 
   fileInput.addEventListener("change", async () => {
     for (const file of fileInput.files ?? []) {
@@ -398,6 +474,7 @@ export async function renderCraft(root: HTMLElement, draftId?: string) {
   header.addEventListener("click", async (e) => {
     const action = (e.target as HTMLElement).closest<HTMLElement>("[data-action]")?.dataset.action;
     if (action === "photo") fileInput.click();
+    if (action === "sticker") setTrayOpen(stickerTray.hidden === true);
     if (action === "draft") {
       if (elements.length === 0 && !titleInput.value.trim()) return;
       if (await save(true)) location.hash = "#/drafts";
